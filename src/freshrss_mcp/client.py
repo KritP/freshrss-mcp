@@ -1,11 +1,12 @@
 """FreshRSS API client using Google Reader API."""
 
 import logging
+from urllib.parse import quote
 
 import httpx
 
 from .config import Config
-from .models import Article, Feed
+from .models import Article, Feed, SubscriptionResult
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +272,165 @@ class FreshRSSClient:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
+    # ── Subscribe / Unsubscribe (GReader quickadd + subscription/edit) ─────
+
+    async def _quickadd(self, url: str) -> dict:
+        """POST to /reader/api/0/subscription/quickadd.
+
+        FreshRSS source: greader.php -> quickadd() returns
+            {numResults: 1, query, streamId="feed/<id>", streamName}  on success
+            {numResults: 0, error: "..."}                              on failure
+        Both are HTTP 200. Failure is signalled by numResults == 0.
+        """
+        await self._ensure_authenticated()
+        response = await self._client.get(
+            f"{self.api_url}/reader/api/0/subscription/quickadd",
+            headers=self._get_auth_headers(),
+            params={"quickadd": url},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def _subscription_edit(
+        self,
+        action: str,                       # 'subscribe' | 'unsubscribe' | 'edit'
+        feed_id: int,
+        *,
+        title: str | None = None,
+        category: str | None = None,
+    ) -> None:
+        """POST to /reader/api/0/subscription/edit.
+
+        FreshRSS source: greader.php -> subscriptionEdit() — on success exits
+        'OK' (HTTP 200), on bad request exits 400 (no body). removeFeed is
+        idempotent: unsubscribing a non-existent feed returns OK.
+
+        title and category are only meaningful for action='edit'. URL-encode
+        category because GReader label streams use '/'.
+        """
+        await self._ensure_authenticated()
+        params: dict[str, str] = {
+            "ac": action,
+            "s": f"feed/{feed_id}",
+        }
+        if title is not None:
+            params["t"] = title
+        if category is not None:
+            params["a"] = f"user/-/label/{quote(category, safe='')}"
+        response = await self._client.post(
+            f"{self.api_url}/reader/api/0/subscription/edit",
+            headers=self._get_auth_headers(),
+            params=params,
+        )
+        response.raise_for_status()
+        # Body is 'OK\n' on success. We don't need to parse it.
+
+    async def subscribe(
+        self,
+        url: str,
+        title: str | None = None,
+        category: str | None = None,
+        *,
+        force: bool = False,
+    ) -> SubscriptionResult:
+        """Subscribe to a feed by URL. Idempotent unless force=True.
+
+        Flow:
+            1. (Skip if force) Look up url in list_feeds(); if present, return
+               SubscriptionResult(already_subscribed=True) with the existing
+               feed's id/title. If title or category were passed, apply them
+               to the existing feed via subscription/edit?ac=edit before
+               returning.
+            2. POST quickadd. Parse {streamId, query, streamName}.
+            3. If title or category given, follow up with subscription/edit
+               to apply them (quickadd does not accept these).
+            4. Return SubscriptionResult(already_subscribed=False).
+        """
+        # Idempotency check (skip if force)
+        if not force:
+            feeds = await self.list_feeds()
+            for feed in feeds:
+                if feed.url == url:
+                    # Apply title/category updates to existing feed if asked.
+                    if title is not None or category is not None:
+                        await self._subscription_edit(
+                            action="edit",
+                            feed_id=feed.id,
+                            title=title,
+                            category=category,
+                        )
+                        applied_title = title if title is not None else feed.name
+                    else:
+                        applied_title = feed.name
+                    return SubscriptionResult(
+                        feed_id=feed.id,
+                        feed_url=feed.url,
+                        title=applied_title,
+                        category=category,  # may be None; we don't know old
+                        already_subscribed=True,
+                    )
+
+        result = await self._quickadd(url)
+        if result.get("numResults", 0) == 0:
+            raise RuntimeError(
+                f"FreshRSS quickadd failed: {result.get('error', 'unknown error')}"
+            )
+
+        stream_id = result.get("streamId", "")
+        feed_id = self._extract_feed_id(stream_id)
+        feed_url = result.get("query", url)
+        feed_title = result.get("streamName", "")
+
+        if title is not None or category is not None:
+            await self._subscription_edit(
+                action="edit",
+                feed_id=feed_id,
+                title=title,
+                category=category,
+            )
+            if title is not None:
+                feed_title = title
+
+        return SubscriptionResult(
+            feed_id=feed_id,
+            feed_url=feed_url,
+            title=feed_title,
+            category=category,
+            already_subscribed=False,
+        )
+
+    async def unsubscribe(
+        self,
+        feed_id: int | None = None,
+        url: str | None = None,
+    ) -> bool:
+        """Unsubscribe a feed by id or URL. At least one required.
+
+        Behavior:
+            - If feed_id is given, use it directly.
+            - If only url is given, look up the id via list_feeds().
+            - If url is not in list_feeds(), raise SubscriptionNotFound.
+            - FreshRSS's removeFeed is idempotent: unsubscribe of a non-
+              existent feed_id returns OK silently (we follow that).
+        """
+        if feed_id is None and url is None:
+            raise ValueError("Either feed_id or url is required")
+
+        if feed_id is None:
+            feeds = await self.list_feeds()
+            match = next((f for f in feeds if f.url == url), None)
+            if match is None:
+                raise SubscriptionNotFound(f"No subscription matches url: {url}")
+            feed_id = match.id
+
+        await self._subscription_edit(action="unsubscribe", feed_id=feed_id)
+        return True
+
 
 class AuthenticationError(Exception):
     """Raised when authentication fails."""
+
+
+class SubscriptionNotFound(Exception):
+    """Raised when unsubscribe is called with a URL or feed_id that does not
+    match any existing subscription."""

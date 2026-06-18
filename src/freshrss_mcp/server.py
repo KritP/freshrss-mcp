@@ -29,7 +29,12 @@ def main() -> None:
     client = FreshRSSClient(config)
 
     mcp = FastMCP("freshrss-mcp")
-    register_tools(mcp, client)
+    register_tools(
+        mcp,
+        client,
+        rsshub_base_url=config.rsshub_base_url,
+        rsshub_routes_path=config.rsshub_routes_path,
+    )
 
     def handle_shutdown(signum: int, frame: object) -> None:
         logger.info("Received shutdown signal, closing connections...")

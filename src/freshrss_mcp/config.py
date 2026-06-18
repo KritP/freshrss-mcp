@@ -18,6 +18,18 @@ class Config(BaseSettings):
     freshrss_api_path: str = Field(default="/api/greader.php", alias="FRESHRSS_API_PATH")
     server_host: str = Field(default="127.0.0.1", alias="MCP_SERVER_HOST")
     server_port: int = Field(default=8000, alias="MCP_SERVER_PORT")
+    # RSSHub pipeline (used by ingest_url / ingest_rsshub_path / list_routes).
+    # rsshub_base_url is the URL FreshRSS will use to fetch the feed — must
+    # be reachable by FreshRSS. Default points at the Tailscale-published
+    # URL on centaur. Override to localhost or another host as needed.
+    rsshub_base_url: str = Field(
+        default="http://100.91.202.122:8087",
+        alias="RSSHUB_BASE_URL",
+    )
+    rsshub_routes_path: str = Field(
+        default="/app/data/routes.json",
+        alias="RSSHUB_ROUTES_PATH",
+    )
 
     model_config = SettingsConfigDict(
         populate_by_name=True,

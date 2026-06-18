@@ -169,6 +169,8 @@ npx @modelcontextprotocol/inspector --url http://127.0.0.1:8000/mcp
 | `FRESHRSS_API_PATH` | No | `/api/greader.php` | Google Reader API path |
 | `MCP_SERVER_HOST` | No | `127.0.0.1` | Bind address |
 | `MCP_SERVER_PORT` | No | `8000` | Bind port |
+| `RSSHUB_BASE_URL` | No | `http://100.91.202.122:8087` | Public URL where FreshRSS can fetch RSSHub-produced feeds. Used by `ingest_url` and `ingest_rsshub_path` to build the feed URL. |
+| `RSSHUB_ROUTES_PATH` | No | `/app/data/routes.json` | Filesystem path to the bundled RSSHub routes catalog. Used by `ingest_url` and `list_routes`. |
 
 ### Available Tools
 
@@ -184,30 +186,37 @@ npx @modelcontextprotocol/inspector --url http://127.0.0.1:8000/mcp
 | `mark_as_unread` | Batch mark articles as unread | `article_ids` |
 | `star_article` | Star/favorite an article | `article_id` |
 | `unstar_article` | Remove star from an article | `article_id` |
+| `subscribe_feed` | Subscribe to a feed by URL. Idempotent unless `force=True`. | `url`, `title`, `category`, `force` |
+| `unsubscribe_feed` | Unsubscribe by `feed_id` or `url`. | `feed_id`, `url` |
+| `ingest_url` | Subscribe to a non-RSS URL via RSSHub. Looks up the route via `radar` field, builds the feed URL, subscribes. | `url`, `prefer`, `force` |
+| `ingest_rsshub_path` | Subscribe to a known RSSHub path directly. | `path`, `params`, `force` |
+| `list_routes` | Search the bundled RSSHub route catalog by name/description. | `query`, `namespace`, `limit` |
 
 ### Architecture Notes
 
 - **Transport**: Streamable HTTP (POST `/mcp`), not stdio. The OpenClaw `openclaw-mcp-bridge` plugin discovers tools via HTTP.
 - **Auth**: Lazy authentication — the FreshRSS client authenticates on the first API call, not at startup.
-- **Error handling**: Every tool catches all exceptions and returns `"Error: ..."` strings. MCP protocol never sees uncaught exceptions.
+- **Error handling**: Every tool catches all exceptions and returns `"Error: ..."` strings. MCP protocol never sees an uncaught exception.
 - **Config**: pydantic-settings `BaseSettings` with `SecretStr` for the password. Validation happens at startup.
 - **Dependencies**: `fastmcp`, `httpx`, `pydantic-settings`. No version pins.
-- **Tests**: 67 unit tests covering config, client, tools, and models. Run with `uv run pytest -v`.
+- **Tests**: 126 unit tests covering config, client, tools, models, and routes_matcher. Run with `uv run pytest -v`.
 
 ### Project Structure
 
 ```
 src/freshrss_mcp/
-  server.py    — FastMCP entry point, signal handlers, streamable-http transport
-  tools.py     — 10 MCP tool definitions with error boundaries
-  client.py    — Async FreshRSS Google Reader API client (httpx)
-  config.py    — pydantic-settings config from env vars
-  models.py    — Article and Feed dataclasses
+  server.py         — FastMCP entry point, signal handlers, streamable-http transport
+  tools.py          — 15 MCP tool definitions with error boundaries
+  client.py         — Async FreshRSS Google Reader API client (httpx)
+  config.py         — pydantic-settings config from env vars
+  models.py         — Article, Feed, SubscriptionResult dataclasses
+  routes_matcher.py — URL→route resolution against bundled RSSHub catalog
 tests/
-  test_config.py   — Config validation, defaults, secret masking
-  test_client.py   — Auth, feeds, articles, ID extraction
-  test_tools.py    — Tool happy paths + error boundaries
-  test_models.py   — Serialization, construction, edge cases
+  test_config.py    — Config validation, defaults, secret masking
+  test_client.py    — Auth, feeds, articles, subscribe, unsubscribe
+  test_tools.py     — Tool happy paths + error boundaries (15 tools)
+  test_models.py    — Serialization, construction, edge cases
+  test_routes.py    — Radar pattern matching + name search
 ```
 
 ## Known Limitations

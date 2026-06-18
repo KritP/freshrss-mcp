@@ -5,6 +5,13 @@
 #
 # Image strategy: uv-managed Python on a slim base. Multi-stage keeps the
 # runtime image small (no uv, no git, no build tools).
+#
+# RSSHub catalog: pulled from diygod/rsshub:latest at build time and copied
+# into /app/data/routes.json. Bump the FROM tag below if you want to pin a
+# specific RSSHub version's catalog. The catalog is ~5MB.
+
+# ── Stage 0: source RSSHub's routes catalog ──────────────────────────────────
+FROM diygod/rsshub:latest AS rsshub
 
 # ── Stage 1: build ───────────────────────────────────────────────────────────
 FROM python:3.13-slim AS build
@@ -32,6 +39,9 @@ RUN groupadd --system --gid 1000 freshrss && \
     useradd  --system --uid 1000 --gid freshrss --no-create-home freshrss
 
 COPY --from=build --chown=freshrss:freshrss /app /app
+
+# Bring in the routes catalog from the RSSHub image.
+COPY --from=rsshub --chown=freshrss:freshrss /app/assets/build/routes.json /app/data/routes.json
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \
