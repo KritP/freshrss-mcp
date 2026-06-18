@@ -187,6 +187,35 @@ def test_find_routes_by_url_skips_routes_without_radar(small_catalog):
     assert candidates == []
 
 
+def test_find_routes_by_url_skips_radar_strings():
+    """Some catalog entries put a bare URL string in `radar` instead of a
+    {source, target} object. The matcher must not crash on those; it should
+    just skip the bad entry and keep matching the good ones."""
+    catalog = {
+        "github": {
+            "name": "GitHub",
+            "routes": {
+                "/github/issue/:user/:repo": {
+                    "name": "Repository Issues",
+                    "radar": [
+                        "github.com/:user/:repo",  # <-- bare string, not a dict
+                        {
+                            "source": ["github.com/:user/:repo"],
+                            "target": "/github/issue/:user/:repo",
+                        },
+                    ],
+                },
+            },
+        },
+    }
+    candidates = find_routes_by_url(
+        "https://github.com/anthropics/anthropic-sdk-python", catalog
+    )
+    assert len(candidates) == 1
+    assert candidates[0].namespace == "github"
+    assert candidates[0].path == "/github/issue/:user/:repo"
+
+
 def test_find_routes_by_url_strips_trailing_slash(small_catalog):
     candidates = find_routes_by_url(
         "https://github.com/anthropics/anthropic-sdk-python/", small_catalog

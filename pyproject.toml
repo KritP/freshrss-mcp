@@ -1,6 +1,6 @@
 [project]
 name = "freshrss-mcp"
-version = "0.4.0"
+version = "0.4.1"
 description = "MCP server for FreshRSS — Streamable HTTP transport for OpenClaw integration"
 readme = "README.md"
 requires-python = ">=3.12,<4"

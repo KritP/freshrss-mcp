@@ -176,6 +176,11 @@ def find_routes_by_url(url: str, catalog: dict) -> list[RouteCandidate]:
     for namespace, ns_data in catalog.items():
         for path_key, route in ns_data.get("routes", {}).items():
             for radar in route.get("radar", []):
+                # Some catalog entries (e.g. in the diy/RSSHub `lib/routes/...` quirk
+                # path or hand-maintained routes) put a bare URL string here instead
+                # of the standard `{source, target}` object. Skip those.
+                if not isinstance(radar, dict):
+                    continue
                 for source in radar.get("source", []):
                     try:
                         pattern, param_names = _template_to_regex(source)
